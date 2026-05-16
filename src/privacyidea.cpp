@@ -150,80 +150,94 @@ int PrivacyIDEA::sendRequest(const std::string &url, const std::map<std::string,
                              const std::map<std::string, std::string> &headers,
                              std::string &response, bool postRequest)
 {
-    CURL *curl;
-    CURLcode res = CURLE_OK;
+    CURL *curl = nullptr;
+    CURLcode res = CURLE_FAILED_INIT;
     string readBuffer;
+    struct curl_slist *headers_list = nullptr;
 
-    curl = curl_easy_init();
-    if (curl)
+    try
     {
-        string postData;
-        if (debug)
+        curl = curl_easy_init();
+        if (!curl)
         {
-            pam_syslog(pamh, LOG_DEBUG, "Sending request to %s with parameters:", url.c_str());
-        }
-        for (const auto &param : parameters)
-        {
-            string tmp = param.first + "=" + urlEncode(param.second) + "&";
-            postData += tmp;
-            if (debug)
-            {
-                if (param.first == "pass")
-                {
-                    pam_syslog(pamh, LOG_DEBUG, "pass=%zu digits", param.second.size());
-                }
-                else
-                {
-                    pam_syslog(pamh, LOG_DEBUG, "%s", tmp.substr(0, tmp.length() - 1).c_str());
-                }
-            }
-        }
-        postData = postData.substr(0, postData.length() - 1); // Remove the trailing '&'
-
-        if (postRequest)
-        {
-            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
-        }
-        else
-        {
-            // GET request
-            curl_easy_setopt(curl, CURLOPT_URL, (url + "?" + postData).c_str());
+            pam_syslog(pamh, LOG_ERR, "curl_easy_init() failed");
+            return CURLE_FAILED_INIT;
         }
 
-        struct curl_slist *headers_list = nullptr;
-        for (const auto &header : headers)
-        {
-            string headerString = header.first + ": " + header.second;
-            headers_list = curl_slist_append(headers_list, headerString.c_str());
-        }
-        headers_list = curl_slist_append(headers_list, ("User-Agent: " + string(PAM_PRIVACYIDEA_USERAGENT)).c_str());
-
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers_list);
+        // ============== HARDENING OPTIONS ==============
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);           // Critical for multi-threaded PAM
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L);   // 12 seconds connect timeout
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);           // 30 seconds total timeout
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);     // Do not follow redirects
+        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 
         if (!sslVerify)
         {
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, false);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, false);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
         }
+
+        // Build POST data
+        string postData;
+        for (const auto &param : parameters)
+        {
+            if (!postData.empty()) postData += "&";
+            postData += param.first + "=" + urlEncode(param.second);
+        }
+
+        
+        std::string fullUrl;
+        if (postRequest)
+        {
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, postData.c_str());
+        }
+        else
+        {
+            fullUrl = url + "?" + postData;
+            curl_easy_setopt(curl, CURLOPT_URL, fullUrl.c_str());
+        }
+
+        // Headers
+        for (const auto &h : headers)
+        {
+            headers_list = curl_slist_append(headers_list, (h.first + ": " + h.second).c_str());
+        }
+
+        std::string ua = "User-Agent: " + std::string(PAM_PRIVACYIDEA_USERAGENT);
+        headers_list = curl_slist_append(headers_list, ua.c_str());
+        
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers_list);
 
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
 
-        res = curl_easy_perform(curl);
+        if (debug)
+        {
+            pam_syslog(pamh, LOG_DEBUG, "Sending request to: %s", url.c_str());
+        }
 
-        curl_slist_free_all(headers_list);
-        curl_easy_cleanup(curl);
+        res = curl_easy_perform(curl);
 
         if (res == CURLE_OK)
         {
-            response = readBuffer;
+            response = std::move(readBuffer);
+        }
+        else
+        {
+            pam_syslog(pamh, LOG_ERR, "curl_easy_perform failed: %s", curl_easy_strerror(res));
         }
     }
-    else
+    catch (const std::exception &e)
     {
-        res = CURLE_FAILED_INIT;
+        pam_syslog(pamh, LOG_ERR, "Exception in sendRequest: %s", e.what());
     }
+
+    // Cleanup
+    if (headers_list)
+        curl_slist_free_all(headers_list);
+    if (curl)
+        curl_easy_cleanup(curl);
 
     return (int)res;
 }

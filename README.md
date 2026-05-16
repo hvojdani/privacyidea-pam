@@ -1,4 +1,12 @@
 # PAM Module for Authentication with PrivacyIDEA
+
+## Fork Description
+Fixed sendRequest segfault and optimized `CURLOPT` param usage, If you have same problem you can test this fork also,
+
+```txt
+ocserv kernel: ocserv-sm[376021]: segfault at 0 ip 0000796bfaf5ca35 sp 00005f275062a520 error 4 in pam_privacyidea.so[796bfaf4e000+4a000] likely on CPU 0 (core 0, socket 0)
+```
+
 ## [Releases](https://github.com/privacyidea/privacyidea-pam/releases)
 ## Features
 * OTP Token

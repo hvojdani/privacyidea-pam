@@ -49,7 +49,7 @@ PrivacyIDEA::PrivacyIDEA(pam_handle_t *pamh, std::string baseURL, std::string re
 
 PrivacyIDEA::~PrivacyIDEA()
 {
-    if (!offlineData.empty())
+    if (!offlineData.empty() && !offlineFile.empty())
     {
         writeAll(offlineFile, offlineData.dump(4));
     }

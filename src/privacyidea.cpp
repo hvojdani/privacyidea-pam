@@ -25,22 +25,24 @@ PrivacyIDEA::PrivacyIDEA(pam_handle_t *pamh, std::string baseURL, std::string re
     this->debug = debug;
     this->realm = realm;
 
-    if (!offlineFile.empty())
-    {
-        this->offlineFile = offlineFile;
-    }
+    this->offlineFile = offlineFile;
 
-    string content = readAll(offlineFile);
-    if (!content.empty())
+    if (!this->offlineFile.empty())
     {
-        try
+        std::string content = readAll(this->offlineFile);
+
+        if (!content.empty())
         {
-            offlineData = json::parse(content);
-        }
-        catch (const json::parse_error &e)
-        {
-            // TODO keep this debug, because having the file is not required
-            pam_syslog(pamh, LOG_DEBUG, "Unable to load offline data: %s", e.what());
+            try
+            {
+                offlineData = json::parse(content);
+            }
+            catch (const json::parse_error &e)
+            {
+                pam_syslog(pamh, LOG_DEBUG,
+                           "Unable to load offline data: %s",
+                           e.what());
+            }
         }
     }
 }

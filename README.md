@@ -14,7 +14,13 @@ If you are on Ubuntu 24.04 and want to build it for Ubuntu 22.04, use a controll
 ```bash
 docker build -t pam-build:22 .
 
-# then run make inside the container
+# clean
+docker run -it --rm \
+  -v $(pwd):/src \
+  pam-build:22 \
+  make clean
+
+# build
 docker run -it --rm \
   -v $(pwd):/src \
   pam-build:22 \

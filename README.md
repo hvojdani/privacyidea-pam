@@ -7,6 +7,21 @@ Fixed sendRequest segfault and optimized `CURLOPT` param usage, If you have same
 ocserv kernel: ocserv-sm[376021]: segfault at 0 ip 0000796bfaf5ca35 sp 00005f275062a520 error 4 in pam_privacyidea.so[796bfaf4e000+4a000] likely on CPU 0 (core 0, socket 0)
 ```
 
+The library requires a compatible `libstdc++` runtime to run.
+
+If you are on Ubuntu 24.04 and want to build it for Ubuntu 22.04, use a controlled build environment:
+
+```bash
+docker build -t pam-build:22 .
+
+# then run make inside the container
+docker run -it --rm \
+  -v $(pwd):/src \
+  pam-build:22 \
+  make
+```
+---
+
 ## [Releases](https://github.com/privacyidea/privacyidea-pam/releases)
 ## Features
 * OTP Token

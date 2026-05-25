@@ -25,7 +25,11 @@ PrivacyIDEA::PrivacyIDEA(pam_handle_t *pamh, std::string baseURL, std::string re
     this->debug = debug;
     this->realm = realm;
 
-    this->offlineFile = offlineFile;
+    if (!offlineFile.empty())
+    {
+        this->offlineFile = offlineFile;
+    }
+
 
     if (!this->offlineFile.empty())
     {
@@ -167,10 +171,10 @@ int PrivacyIDEA::sendRequest(const std::string &url, const std::map<std::string,
         }
 
         // ============== HARDENING OPTIONS ==============
-        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);           // Critical for multi-threaded PAM
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L);   // 12 seconds connect timeout
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);           // 30 seconds total timeout
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);     // Do not follow redirects
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);        // Critical for multi-threaded PAM
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L); // 12 seconds connect timeout
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);        // 30 seconds total timeout
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);  // Do not follow redirects
         curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 
         if (!sslVerify)
@@ -183,11 +187,11 @@ int PrivacyIDEA::sendRequest(const std::string &url, const std::map<std::string,
         string postData;
         for (const auto &param : parameters)
         {
-            if (!postData.empty()) postData += "&";
+            if (!postData.empty())
+                postData += "&";
             postData += param.first + "=" + urlEncode(param.second);
         }
 
-        
         std::string fullUrl;
         if (postRequest)
         {
@@ -208,7 +212,7 @@ int PrivacyIDEA::sendRequest(const std::string &url, const std::map<std::string,
 
         std::string ua = "User-Agent: " + std::string(PAM_PRIVACYIDEA_USERAGENT);
         headers_list = curl_slist_append(headers_list, ua.c_str());
-        
+
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers_list);
 
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
@@ -270,7 +274,7 @@ int PrivacyIDEA::offlineRefill(const std::string &user, const std::string &lastO
             auto retval = sendRequest(baseURL + "/validate/offlinerefill", parameters, headers, response);
             if (debug)
             {
-                    pam_syslog(pamh, LOG_DEBUG, "%s", response.c_str());
+                pam_syslog(pamh, LOG_DEBUG, "%s", response.c_str());
             }
             if (retval != 0)
             {
@@ -293,8 +297,7 @@ int PrivacyIDEA::offlineRefill(const std::string &user, const std::string &lastO
                 return 1;
             }
 
-            if (j.contains("auth_items") && j["auth_items"].contains("offline") && j["auth_items"]["offline"].is_array() && j["auth_items"]["offline"].size() > 0 
-            && j["auth_items"]["offline"][0].contains("refilltoken") && j["auth_items"]["offline"][0].contains("response"))
+            if (j.contains("auth_items") && j["auth_items"].contains("offline") && j["auth_items"]["offline"].is_array() && j["auth_items"]["offline"].size() > 0 && j["auth_items"]["offline"][0].contains("refilltoken") && j["auth_items"]["offline"][0].contains("response"))
             {
                 item["refilltoken"] = j["auth_items"]["offline"][0]["refilltoken"];
                 item["response"].update(j["auth_items"]["offline"][0]["response"]);
@@ -314,76 +317,121 @@ int PrivacyIDEA::offlineRefill(const std::string &user, const std::string &lastO
 
 int PrivacyIDEA::offlineCheck(const std::string &user, const std::string &otp, std::string &serialUsed)
 {
-    // Check if given user exists
-    if (!offlineData.contains("offline") || !offlineData["offline"].is_array())
+    // 🔥 HARD DISABLE GATE
+    if (offlineFile.empty())
     {
-        return OFFLINE_FILE_WRONG_FORMAT;
+        return OFFLINE_NO_DATA;
+    }
+
+    // Validate structure strictly
+    if (!offlineData.is_object() ||
+        !offlineData.contains("offline") ||
+        !offlineData["offline"].is_array())
+    {
+        return OFFLINE_NO_DATA;
     }
 
     bool userFound = false;
-    bool success = false;
 
-    for (auto &item : offlineData["offline"])
+    // iterate over snapshot to avoid iterator invalidation
+    auto offlineSnapshot = offlineData["offline"];
+
+    for (auto &item : offlineSnapshot)
     {
-        if (item.contains("username") && item["username"].get<string>() == user)
+        if (!item.is_object())
+            continue;
+
+        if (!item.contains("username") || !item["username"].is_string())
+            continue;
+
+        std::string username = item["username"].get<std::string>();
+
+        if (username != user)
+            continue;
+
+        userFound = true;
+
+        std::string serial;
+        if (item.contains("serial") && item["serial"].is_string())
+            serial = item["serial"].get<std::string>();
+
+        if (debug)
         {
-            userFound = true;
-            if (debug)
+            pam_syslog(pamh, LOG_DEBUG,
+                       "Offline token with serial %s found for user %s",
+                       serial.c_str(),
+                       user.c_str());
+        }
+
+        if (!item.contains("response") || !item["response"].is_object())
+            continue;
+
+        std::map<std::string, std::string> offlineMap;
+
+        for (auto &offlineEntries : item["response"].items())
+        {
+            offlineMap.emplace(offlineEntries.key(), offlineEntries.value());
+        }
+
+        if (offlineMap.empty())
+            continue;
+
+        auto comp = [](const std::string &a, const std::string &b)
+        {
+            return std::stoi(a) < std::stoi(b);
+        };
+
+        std::map<std::string, std::string, decltype(comp)> orderedMap(comp);
+        for (auto &kv : offlineMap)
+        {
+            orderedMap.emplace(kv.first, kv.second);
+        }
+
+        int lowestKey = std::stoi(orderedMap.begin()->first);
+        int matchingKey = -1;
+        int window = 10;
+
+        bool success = false;
+
+        for (auto &offlineEntries : orderedMap)
+        {
+            int index = std::stoi(offlineEntries.first);
+
+            if (index >= (lowestKey + window))
+                break;
+
+            if (pbkdf2_sha512_verify(otp, offlineEntries.second))
             {
-                pam_syslog(pamh, LOG_DEBUG, "Offline token with serial %s found for user %s", item["serial"].get<std::string>().c_str(), user.c_str());
+                matchingKey = index;
+                success = true;
+                serialUsed = serial;
+
+                if (debug)
+                {
+                    pam_syslog(pamh, LOG_DEBUG, "Offline OTP success.");
+                }
+
+                break;
+            }
+        }
+
+        if (success)
+        {
+            // IMPORTANT: do NOT modify JSON while iterating original structure
+            for (int i = lowestKey; i <= matchingKey; i++)
+            {
+                item["response"].erase(std::to_string(i));
             }
 
-            if (item.contains("response"))
-            {
-                // Order the string keys in the map by their numeric value
-                auto comp = [](const string &a, const string &b)
-                {
-                    return stoi(a) < stoi(b);
-                };
-                map<string, string, decltype(comp)> offlineMap(comp);
-                for (auto &offlineEntries : item["response"].items())
-                {
-                    offlineMap.emplace(offlineEntries.key(), offlineEntries.value());
-                }
-
-                int lowestKey = stoi(offlineMap.begin()->first);
-                int matchingKey = 0;
-                int window = 10; // TODO make this configurable?
-                for (auto &offlineEntries : offlineMap)
-                {
-                    int index = stoi(offlineEntries.first);
-                    if (index >= (lowestKey + window))
-                    {
-                        break;
-                    }
-
-                    if (pbkdf2_sha512_verify(otp, offlineEntries.second))
-                    {
-                        matchingKey = index;
-                        success = true;
-                        serialUsed = item["serial"].get<std::string>();
-                        if (debug)
-                        {
-                            pam_syslog(pamh, LOG_DEBUG, "Success.");
-                        }
-                        break;
-                    }
-                }
-
-                if (success)
-                {
-                    // remove the "used" values
-                    for (int i = lowestKey; i <= matchingKey; i++)
-                    {
-                        item["response"].erase(to_string(i));
-                    }
-                    break;
-                }
-            }
+            return OFFLINE_SUCCESS;
+        }
+        else
+        {
+            return OFFLINE_FAIL;
         }
     }
 
-    return userFound ? (success ? OFFLINE_SUCCESS : OFFLINE_FAIL) : OFFLINE_USER_NOT_FOUND;
+    return userFound ? OFFLINE_FAIL : OFFLINE_USER_NOT_FOUND;
 }
 
 // Returns the outer right value of the passlib format and cuts it off the input string including the $
@@ -544,10 +592,16 @@ bool PrivacyIDEA::pbkdf2_sha512_verify(const std::string &password, std::string 
 
 std::string PrivacyIDEA::readAll(std::string file)
 {
+    if (offlineFile.empty())
+    {
+        return "";
+    }
+
     std::ifstream inFile(offlineFile);
     if (!inFile)
     {
         pam_syslog(pamh, LOG_ERR, "Unable to open offline file. Error: %d %s", errno, strerror(errno));
+        return "";
     }
     std::string content((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
     inFile.close();

@@ -1,6 +1,6 @@
 include/json.hpp
 *.o
-pam_privacyidea.so
+pam_privacyidea*.so
 *.swp
 
 # CMake

@@ -48,7 +48,7 @@ private:
     std::string realm;
 
     std::string offlineFile = "/etc/privacyidea/pam.txt";
-    nlohmann::json offlineData;
+    nlohmann::json offlineData = nlohmann::json::object();
 
     bool pbkdf2_sha512_verify(const std::string &password, std::string comparable);
 
